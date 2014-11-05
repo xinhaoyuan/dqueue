@@ -110,6 +110,7 @@ __dqueue_pop(dqueue_t q) {
 }
 
 #ifndef HELP_THRESHOLD
+#warning DEFAULT HELP THRESHOLD IS 10
 #define HELP_THRESHOLD 10
 #endif
 
