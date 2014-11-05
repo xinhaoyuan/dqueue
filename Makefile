@@ -1,6 +1,6 @@
 .PHONY: clean
 
-CCFLAGS := -DHELP_THRESHOLD=10
+CCFLAGS := -DHELP_THRESHOLD=100
 CC := gcc -O2 ${CCFLAGS}
 # CC := gcc -O0 -g ${CCFLAGS}
 test: test.c dqueue.o

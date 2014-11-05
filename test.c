@@ -13,7 +13,7 @@ pthread_t t[NTHREADS];
 volatile int start_flag = 0;
 volatile int end_count = 0;
 
-int r[NTHREADS][WORKLOAD];
+// int r[NTHREADS][WORKLOAD];
 unsigned long long ts[NTHREADS];
 
 static __inline__ unsigned long long rdtsc(void)
@@ -39,7 +39,7 @@ entry(void *_) {
     void *d;
     for (i = 0; i < WORKLOAD; ++ i) {
         assert(dqueue_pop(q, &d));
-        r[index - 1][i] = (int)(unsigned long)d;
+        // r[index - 1][i] = (int)(unsigned long)d;
     }
 
     ts[index - 1] = rdtsc() - tt;
@@ -54,9 +54,8 @@ entry(void *_) {
 }
 
 int
-main(void) {
-
-    memset(r, 0, sizeof(r));
+main(int argc, char **argv) {
+    // memset(r, 0, sizeof(r));
     
     q = dqueue_create(NTHREADS * WORKLOAD * 2);
 
