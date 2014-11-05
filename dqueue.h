@@ -7,8 +7,9 @@ typedef struct dqueue_request_s *dqueue_request_t;
 typedef struct dqueue_request_s {
     volatile enum { OP_UNINITIALIZED = 0, OP_PUSH, OP_POP, OP_FINISHED }
         req_type;
-    volatile void *data;
+    void * volatile data;
     volatile dqueue_request_t next;
+    volatile int ready;
 } dqueue_request_s;
     
 typedef struct dqueue_s *dqueue_t;

@@ -21,15 +21,33 @@ dqueue_destroy(dqueue_t q) {
 }
 
 #define CAS __sync_val_compare_and_swap
-#define SWAP(p, v)              /* TODO */
+#define SWAP(p, v) ({ v; })
+
+inline int
+__dqueue_push(dqueue_t q, void *data) {
+    int t = (q->tail + 1) % q->size;
+    if (t == q->head)
+        return 0;               /* full */
+    q->entry[q->tail = t] = data;
+    return 1;
+}
+
+inline void *
+__dqueue_pop(dqueue_t q) {
+    if (q->tail == q->head)
+        return NULL;               /* empty */
+    void *ret = q->entry[q->head];
+    q->head = (q->head + 1) % q->size;
+    return ret;
+}
 
 inline void
 __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
     dqueue_request_t cur;
     
     if (!(cur = req->next)) {
-        if (CAS(&q->req, &req, NULL) == &req)
-            return 0;
+        if (CAS(&q->req, req, NULL) == req)
+            return;
         else {
             while (!(cur = req->next))
                 asm volatile ("pause");
@@ -50,7 +68,7 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
         req->req_type = OP_FINISHED;
         
         if (!(cur = req->next)) {
-            if (CAS(&q->req, &req, NULL) == &req)
+            if (CAS(&q->req, &req, NULL) == (volatile dqueue_request_t)&req)
                 continue;
             else {
                 while (!(cur = req->next))
@@ -63,31 +81,13 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
 
 }
 
-inline int
-__dqueue_push(dqueue_t q, void *data) {
-    int t = (q->tail + 1) % q->size;
-    if (t == q->head)
-        return 0;               /* full */
-    q->data[q->tail = t] = data;
-    return 1;
-}
-
-inline void *
-__dqueue_pop(dqueue_t q) {
-    if (q->tail == q->head)
-        return NULL;               /* empty */
-    void *ret = q->data[q->head];
-    q->head = (q->head + 1) % q->size;
-    return ret;
-}
-
 int
 dqueue_push(dqueue_t q, void *data) {
     dqueue_request_s req;
     memset(&req, 0, sizeof(req));
     dqueue_request_t cur = SWAP(&q->req, &req);
     if (cur) {
-        cur->next = req;
+        cur->next = &req;
         req.data = data;
         __sync_synchonrize();
         
@@ -100,7 +100,7 @@ dqueue_push(dqueue_t q, void *data) {
     }
 
     int ret = __dqueue_push(q, data);
-    __dqueue_process_requests_after(q, req);
+    __dqueue_process_requests_after(q, &req);
     return ret;
 }
 
@@ -110,7 +110,7 @@ dqueue_pop(dqueue_t q, void **data) {
     memset(&req, 0, sizeof(req));
     dqueue_request_t cur = SWAP(&q->req, &req);
     if (cur) {
-        cur->next = req;
+        cur->next = &req;
         req.data = data;
         __sync_synchonrize();
         
@@ -126,6 +126,6 @@ dqueue_pop(dqueue_t q, void **data) {
 
     void *ret = __dqueue_pop(q);
     if (data) *data = ret;
-    __dqueue_process_requests_after(q, req);
+    __dqueue_process_requests_after(q, &req);
     return ret != NULL;
 }
