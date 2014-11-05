@@ -20,8 +20,8 @@ typedef struct dqueue_request_s {
 typedef struct dqueue_s *dqueue_t;
 typedef struct dqueue_s {
     volatile dqueue_request_t req __attribute__((aligned(CACHE_LINE_SIZE)));
-    unsigned int size, head, tail;
-    void *entry[0];             /* place holder */
+    volatile unsigned int size, head, tail;
+    void * volatile entry[0];             /* place holder */
 } dqueue_s;
 
 dqueue_t dqueue_create(unsigned int size);

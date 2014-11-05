@@ -1,12 +1,25 @@
 #include "dqueue.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <assert.h>
+
+void *aligned_malloc(int size, int align) {
+    void *mem = malloc(size+align+sizeof(void*));
+    void **ptr = (void**)((long)(mem+align+sizeof(void*)) & ~(align-1));
+    ptr[-1] = mem;
+    return ptr;
+}
+
+void aligned_free(void *ptr) {
+    free(((void**)ptr)[-1]);
+}
 
 dqueue_t
 dqueue_create(unsigned int size) {
-    dqueue_t q = (dqueue_t)malloc(sizeof(dqueue_s) + sizeof(void *) * size);
+    dqueue_t q = (dqueue_t)aligned_malloc(sizeof(dqueue_s) + sizeof(void *) * size, CACHE_LINE_SIZE);
     /* assume the address allocated is cache aligned */
-    assert((unsigned long)q & (CACHE_LINE_SIZE - 1) == 0);
+    assert(((unsigned long)q & (CACHE_LINE_SIZE - 1)) == 0);
     if (q) {
         q->req = NULL;
         q->size = size;
@@ -17,7 +30,7 @@ dqueue_create(unsigned int size) {
 
 void
 dqueue_destroy(dqueue_t q) {
-    free(q);
+    aligned_free(q);
 }
 
 #define CAS __sync_val_compare_and_swap
@@ -81,18 +94,24 @@ __dqueue_push(dqueue_t q, void *data) {
     int t = (q->tail + 1) % q->size;
     if (t == q->head)
         return 0;               /* full */
-    q->entry[q->tail = t] = data;
+    q->entry[q->tail] = data;
+    q->tail = t;
     return 1;
 }
 
 inline void *
 __dqueue_pop(dqueue_t q) {
-    if (q->tail == q->head)
+    if (q->tail == q->head) {
         return NULL;               /* empty */
+    }
     void *ret = q->entry[q->head];
     q->head = (q->head + 1) % q->size;
     return ret;
 }
+
+#ifndef HELP_THRESHOLD
+#define HELP_THRESHOLD 10
+#endif
 
 inline void
 __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
@@ -102,35 +121,47 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
         if (CAS(&q->req, req, NULL) == req)
             return;
         else {
+            // printf("<\n");
             while (!(cur = req->next))
                 asm volatile ("pause");
+            // printf(">\n");
         }
     }
-    
-    while (req = cur) {
+
+    int help_count = 0;
+
+    while ((req = cur) &&
+           (++ help_count <= HELP_THRESHOLD)) {
         unsigned int req_type;
-        while ((req_type = req->req_type) != OP_UNINITIALIZED)
+        // printf("<\n");
+        while ((req_type = req->req_type) == OP_UNINITIALIZED)
             asm volatile ("pause");
+        // printf(">\n");
         /* fulfill the next request */
-        if (req_type == OP_PUSH) 
+        if (req_type == OP_PUSH) {
             if (!__dqueue_push(q, req->data))
                 req->data = NULL;
-        else if (req_type == OP_POP)
+        } else if (req_type == OP_POP) 
             req->data = __dqueue_pop(q);
+        __sync_synchronize();
         req->req_type = OP_FINISHED;
         /* fetch the next pointer */
         if (!(cur = req->next)) {
-            if (CAS(&q->req, &req, NULL) == (volatile dqueue_request_t)&req)
-                continue;
-            else {
+            if (CAS(&q->req, req, NULL) == req) {
+                break;
+            } else {
+                // printf("< %p %p %p\n", q->req, req, req->next);
                 while (!(cur = req->next))
                     asm volatile ("pause");
+                // printf(">\n");
             }
-        } else __sync_synchonrize();
+        }
         /* the the request to be ready */
         req->ready = 1;
     }
 
+    if (req)
+        req->ready = 1;
 }
 
 int
@@ -141,20 +172,22 @@ dqueue_push(dqueue_t q, void *data) {
     memset(&req, 0, sizeof(req));
     dqueue_request_t cur = SWAP(&q->req, &req);
     if (cur) {
+        // printf("set %p->next\n", cur);
         cur->next = &req;
         req.data = data;
-        __sync_synchonrize();
+        __sync_synchronize();
         
         req.req_type = OP_PUSH;
         while (!req.ready)
             asm volatile ("pause");
 
-        if (req.req_type == OP_FINISHED)
+        if (req.req_type == OP_FINISHED) {
             return req.data == data;
+        }
     }
 
     int ret = __dqueue_push(q, data);
-    // __dqueue_process_requests_after(q, &req);
+    __dqueue_process_requests_after(q, &req);
     return ret;
 }
 
@@ -166,9 +199,10 @@ dqueue_pop(dqueue_t q, void **data) {
     if (cur) {
         cur->next = &req;
         req.req_type = OP_POP;
+
         while (!req.ready)
             asm volatile ("pause");
-
+        
         if (req.req_type == OP_FINISHED) {
             if (data) *data = req.data;
             return req.data != NULL;
@@ -177,6 +211,6 @@ dqueue_pop(dqueue_t q, void **data) {
 
     void *ret = __dqueue_pop(q);
     if (data) *data = ret;
-    // __dqueue_process_requests_after(q, &req);
+    __dqueue_process_requests_after(q, &req);
     return ret != NULL;
 }
