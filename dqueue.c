@@ -21,7 +21,60 @@ dqueue_destroy(dqueue_t q) {
 }
 
 #define CAS __sync_val_compare_and_swap
-#define SWAP(p, v) ({ v; })
+
+/*
+ * Constants for operation sizes. On 32-bit, the 64-bit size it set to
+ * -1 because sizeof will never return -1, thereby making those switch
+ * case statements guaranteeed dead code which the compiler will
+ * eliminate, and allowing the "missing symbol in the default case" to
+ * indicate a usage error.
+ */
+#define __X86_CASE_B	1
+#define __X86_CASE_W	2
+#define __X86_CASE_L	4
+#define __X86_CASE_Q	8
+
+/* 
+ * An exchange-type operation, which takes a value and a pointer, and
+ * returns the old value.
+ */
+#define __xchg_op(ptr, arg, op, lock)					\
+	({                                                  \
+        __typeof__ (*(ptr)) __ret = (arg);              \
+		switch (sizeof(*(ptr))) {                       \
+		case __X86_CASE_B:                              \
+			asm volatile (lock #op "b %b0, %1\n"		\
+                          : "+q" (__ret), "+m" (*(ptr))	\
+                          : : "memory", "cc");          \
+			break;                                      \
+		case __X86_CASE_W:                              \
+			asm volatile (lock #op "w %w0, %1\n"		\
+                          : "+r" (__ret), "+m" (*(ptr))	\
+                          : : "memory", "cc");          \
+			break;                                      \
+		case __X86_CASE_L:                              \
+			asm volatile (lock #op "l %0, %1\n"         \
+                          : "+r" (__ret), "+m" (*(ptr))	\
+                          : : "memory", "cc");          \
+			break;                                      \
+		case __X86_CASE_Q:                              \
+			asm volatile (lock #op "q %q0, %1\n"		\
+                          : "+r" (__ret), "+m" (*(ptr))	\
+                          : : "memory", "cc");          \
+			break;                                      \
+		}                                               \
+		__ret;                                          \
+	})
+
+/*
+ * Note: no "lock" prefix even on SMP: xchg always implies lock anyway.
+ * Since this is generally used to protect other memory information, we
+ * use "asm volatile" and "memory" clobbers to prevent gcc from moving
+ * information around.
+ */
+#define xchg(ptr, v)	__xchg_op((ptr), (v), xchg, "")
+
+#define SWAP(p, v) xchg(p, v)
 
 inline int
 __dqueue_push(dqueue_t q, void *data) {
@@ -55,18 +108,17 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
     }
     
     while (req = cur) {
-        
-        while (req->req_type != OP_UNINITIALIZED)
+        unsigned int req_type;
+        while ((req_type = req->req_type) != OP_UNINITIALIZED)
             asm volatile ("pause");
-        
-        if (req->req_type == OP_PUSH) 
+        /* fulfill the next request */
+        if (req_type == OP_PUSH) 
             if (!__dqueue_push(q, req->data))
                 req->data = NULL;
-        else if (cur->req_type == OP_POP)
+        else if (req_type == OP_POP)
             req->data = __dqueue_pop(q);
-        
         req->req_type = OP_FINISHED;
-        
+        /* fetch the next pointer */
         if (!(cur = req->next)) {
             if (CAS(&q->req, &req, NULL) == (volatile dqueue_request_t)&req)
                 continue;
@@ -74,8 +126,8 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
                 while (!(cur = req->next))
                     asm volatile ("pause");
             }
-        }
-        __sync_synchonrize();
+        } else __sync_synchonrize();
+        /* the the request to be ready */
         req->ready = 1;
     }
 
@@ -83,6 +135,8 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
 
 int
 dqueue_push(dqueue_t q, void *data) {
+    if (data == NULL) return 0;
+    
     dqueue_request_s req;
     memset(&req, 0, sizeof(req));
     dqueue_request_t cur = SWAP(&q->req, &req);
@@ -100,7 +154,7 @@ dqueue_push(dqueue_t q, void *data) {
     }
 
     int ret = __dqueue_push(q, data);
-    __dqueue_process_requests_after(q, &req);
+    // __dqueue_process_requests_after(q, &req);
     return ret;
 }
 
@@ -111,10 +165,7 @@ dqueue_pop(dqueue_t q, void **data) {
     dqueue_request_t cur = SWAP(&q->req, &req);
     if (cur) {
         cur->next = &req;
-        req.data = data;
-        __sync_synchonrize();
-        
-        req.req_type = OP_PUSH;
+        req.req_type = OP_POP;
         while (!req.ready)
             asm volatile ("pause");
 
@@ -126,6 +177,6 @@ dqueue_pop(dqueue_t q, void **data) {
 
     void *ret = __dqueue_pop(q);
     if (data) *data = ret;
-    __dqueue_process_requests_after(q, &req);
+    // __dqueue_process_requests_after(q, &req);
     return ret != NULL;
 }
