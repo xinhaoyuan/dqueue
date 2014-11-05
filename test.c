@@ -5,8 +5,8 @@
 #include <unistd.h>
 #include "dqueue.h"
 
-#define NTHREADS 4
-#define WORKLOAD 16384
+#define NTHREADS 12
+#define WORKLOAD 8192
 
 dqueue_t q;
 pthread_t t[NTHREADS];

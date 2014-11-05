@@ -2,12 +2,12 @@
 
 import os, sys, subprocess
 
-def main():
+def main(name):
   t_sum = 0;
   for i in xrange(0,100):
-    t = int(subprocess.check_output('./test', shell = True))
+    t = int(subprocess.check_output('./' + name, shell = True))
     t_sum += t
   print t_sum
 
 if __name__ == '__main__':
-  main()
+  main(sys.argv[1])
