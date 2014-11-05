@@ -5,11 +5,13 @@
 #include <unistd.h>
 #include "dqueue.h"
 
-#define NTHREADS 12
+#define NTHREADS 64
 #define WORKLOAD 8192
 
+int nthreads;
 dqueue_t q;
 pthread_t t[NTHREADS];
+
 volatile int start_flag = 0;
 volatile int end_count = 0;
 
@@ -56,11 +58,14 @@ entry(void *_) {
 int
 main(int argc, char **argv) {
     // memset(r, 0, sizeof(r));
+
+    if (argc > 1) nthreads = atoi(argv[1]);
+    else nthreads = 4;
     
-    q = dqueue_create(NTHREADS * WORKLOAD * 2);
+    q = dqueue_create(nthreads * WORKLOAD * 2);
 
     int i;
-    for (i = 1; i < NTHREADS; ++ i) 
+    for (i = 1; i < nthreads; ++ i) 
         pthread_create(&t[i], NULL, entry, (void *)(unsigned long)i);
 
     usleep(10000);
@@ -68,19 +73,19 @@ main(int argc, char **argv) {
     
     entry((void *)0);
 
-    while (end_count < NTHREADS)
+    while (end_count < nthreads)
         asm volatile ("pause");
 
     dqueue_destroy(q);
 
     unsigned long long sum = 0;
-    for (i = 0; i < NTHREADS; ++ i) {
+    for (i = 0; i < nthreads; ++ i) {
         // printf("%lld\n", ts[i]);
         sum += ts[i];
     }
     printf("%llu\n", sum);
 
-    /* for (i = 0; i < NTHREADS; ++ i) { */
+    /* for (i = 0; i < nthreads; ++ i) { */
     /*     int j; */
     /*     for (j = 0; j < WORKLOAD; ++ j) { */
     /*         printf("%d\n", r[i][j]); */

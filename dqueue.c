@@ -167,7 +167,10 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
 int
 dqueue_push(dqueue_t q, void *data) {
     if (data == NULL) return 0;
-    
+#if LOCK == 0
+    while (CAS(&q->req, NULL, (void *)1) == (void *)1)
+        asm volatile ("pause");
+#elif LOCK == 1
     dqueue_request_s req;
     memset(&req, 0, sizeof(req));
     dqueue_request_t cur = SWAP(&q->req, &req);
@@ -185,14 +188,23 @@ dqueue_push(dqueue_t q, void *data) {
             return req.data == data;
         }
     }
+#endif
 
     int ret = __dqueue_push(q, data);
+#if LOCK == 0
+    q->req = NULL;
+#elif LOCK == 1
     __dqueue_process_requests_after(q, &req);
+#endif
     return ret;
 }
 
 int
 dqueue_pop(dqueue_t q, void **data) {
+#if LOCK == 0
+    while (CAS(&q->req, NULL, (void *)1) == (void *)1)
+        asm volatile ("pause");
+#elif LOCK == 1
     dqueue_request_s req;
     memset(&req, 0, sizeof(req));
     dqueue_request_t cur = SWAP(&q->req, &req);
@@ -208,9 +220,14 @@ dqueue_pop(dqueue_t q, void **data) {
             return req.data != NULL;
         }
     }
-
+#endif
+    
     void *ret = __dqueue_pop(q);
     if (data) *data = ret;
+#if LOCK == 0
+    q->req = NULL;
+#elif LOCK == 1
     __dqueue_process_requests_after(q, &req);
+#endif
     return ret != NULL;
 }
