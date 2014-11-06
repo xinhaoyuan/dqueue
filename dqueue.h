@@ -15,8 +15,7 @@ typedef struct dqueue_request_s {
     void * volatile data;
     volatile dqueue_request_t next;
     volatile int ready;
-} __attribute__ ((aligned(CACHE_LINE_SIZE)))
-dqueue_request_s;
+} dqueue_request_s;
     
 typedef struct dqueue_s *dqueue_t;
 typedef struct dqueue_s {
