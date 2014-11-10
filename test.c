@@ -28,23 +28,25 @@ static __inline__ unsigned long long rdtsc(void)
 void *
 entry(void *_) {
     int index = (unsigned long)_ + 1;
+    ts[index - 1] = 0;
 
     while (!start_flag) asm volatile ("pause");
-
-    unsigned long long tt = rdtsc();
+    unsigned long long tt;
     
     int i;
     for (i = 0; i < WORKLOAD; ++ i) {
+        tt = rdtsc();
         assert(dqueue_push(q, (void *)(unsigned long)(index * WORKLOAD + i)));
+        ts[index - 1] += rdtsc() - tt;
     }
 
     void *d;
     for (i = 0; i < WORKLOAD; ++ i) {
+        tt = rdtsc();
         assert(dqueue_pop(q, &d));
         // r[index - 1][i] = (int)(unsigned long)d;
+        ts[index - 1] += rdtsc() - tt;
     }
-
-    ts[index - 1] = rdtsc() - tt;
 
     while (1) {
         int old = end_count;
