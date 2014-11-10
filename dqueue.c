@@ -144,8 +144,8 @@ __dqueue_process_requests_after(dqueue_t q, dqueue_request_t req) {
                 req->data = NULL;
         } else if (req_type == OP_POP) 
             req->data = __dqueue_pop(q);
-        __sync_synchronize();
         req->req_type = OP_FINISHED;
+        __sync_synchronize();
         /* fetch the next pointer */
         if (!(cur = req->next)) {
             if (CAS(&q->req, req, NULL) == req) {
